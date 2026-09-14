@@ -1,0 +1,8 @@
+[package]
+name = "gud-protocol"
+description = "Device side of the GUD (Generic USB Display) protocol, independent of USB stack and panel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

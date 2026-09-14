@@ -1,0 +1,13 @@
+[package]
+name = "gud-panel"
+description = "ST7789V2 driver and diagnostics for the Waveshare 1.69\" 240x280 LCD"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+embedded-hal.workspace = true
+
+[features]
+# Present the panel rotated 90 degrees as 280x240 instead of the native 240x280.
+landscape = []

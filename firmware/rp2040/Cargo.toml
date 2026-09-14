@@ -1,0 +1,21 @@
+[package]
+name = "gud-rp2040"
+description = "GUD (Generic USB Display) firmware for the Waveshare RP2040-Touch-LCD-1.69"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gud-protocol.workspace = true
+gud-panel.workspace = true
+embedded-hal.workspace = true
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+panic-halt = "1.0"
+rp2040-boot2 = "0.3"
+rp2040-hal = { version = "0.11", features = ["critical-section-impl", "rt"] }
+usb-device = "0.3"
+usbd-serial = "0.2"
+
+[features]
+landscape = ["gud-panel/landscape"]

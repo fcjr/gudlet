@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/gud-protocol",
+    "crates/gud-panel",
+    "firmware/esp32s3",
+    "firmware/rp2040",
+]
+# `cargo build`/`cargo test` at the root only touch the host-testable crates.
+# The firmware crates need their own toolchain and target; build them from
+# their directory or with `just` (see justfile).
+default-members = ["crates/gud-protocol", "crates/gud-panel"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+gud-protocol = { path = "crates/gud-protocol" }
+gud-panel = { path = "crates/gud-panel" }
+embedded-hal = "1.0"
+
+[profile.release]
+codegen-units = 1
+debug = true
+lto = "fat"
+opt-level = 3
+
+[profile.dev]
+# Unoptimised code can't keep up with the USB bulk stream.
+opt-level = 1
+
+# Patched to receive several bulk OUT packets per transfer; see vendor/README.md.
+[patch.crates-io]
+embassy-usb-synopsys-otg = { path = "vendor/embassy-usb-synopsys-otg" }

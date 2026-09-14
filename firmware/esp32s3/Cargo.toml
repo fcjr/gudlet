@@ -1,0 +1,30 @@
+[package]
+name = "gud-esp32s3"
+description = "GUD (Generic USB Display) firmware for the Waveshare ESP32-S3-Touch-LCD-1.69"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gud-protocol.workspace = true
+gud-panel.workspace = true
+embedded-hal.workspace = true
+embassy-executor = "0.10"
+embassy-futures = "0.1"
+embassy-sync = "0.7"
+embassy-time = "0.5"
+embassy-usb = { version = "0.6", default-features = false }
+embedded-hal-async = "1.0"
+esp-bootloader-esp-idf = { version = "0.6", features = ["esp32s3"] }
+esp-hal = { version = "1.2", features = ["esp32s3", "unstable"] }
+esp-println = { version = "0.18", default-features = false, features = ["esp32s3", "jtag-serial"] }
+esp-rtos = { version = "0.4", features = ["esp32s3", "embassy"] }
+esp32s3 = "0.36"
+lz4_flex = { version = "0.14", default-features = false }
+static_cell = "2"
+
+[features]
+landscape = ["gud-panel/landscape"]
+# Draw a hex status strip across the top of the panel once a second (see
+# src/panel.rs). Bring-up aid; it covers the top 36 rows of the desktop.
+debug-strip = []
