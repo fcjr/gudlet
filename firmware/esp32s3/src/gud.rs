@@ -93,10 +93,8 @@ pub struct Stats {
     pub console_rx_bytes: AtomicU32,
     pub console_tx_ok: AtomicU32,
     pub console_tx_timeout: AtomicU32,
-    /// Touch reports sent, dropped because the host was not polling, and
-    /// controller reads that failed.
+    /// Touch reports sent, and controller reads or endpoint writes that failed.
     pub touch_reports: AtomicU32,
-    pub touch_dropped: AtomicU32,
     pub touch_errors: AtomicU32,
 }
 
@@ -128,7 +126,6 @@ impl Stats {
             console_tx_ok: AtomicU32::new(0),
             console_tx_timeout: AtomicU32::new(0),
             touch_reports: AtomicU32::new(0),
-            touch_dropped: AtomicU32::new(0),
             touch_errors: AtomicU32::new(0),
         }
     }

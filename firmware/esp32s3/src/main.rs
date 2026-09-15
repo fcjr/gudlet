@@ -304,7 +304,7 @@ async fn console_task<'d>(
         let mut line = Line::new();
         let _ = write!(
             line,
-            "gud {}x{} up={}s reset={:?} updates={} bytes={} wire={} rejected={} last_rejected=0x{:02x} abandoned={} rx_disabled={} rx_overflow={} decode_errors={} rx_us={} rx_pkts={} decode_us={} swap_us={} spi_us={} idle_us={} starve_us={} bands_written={} pixels_written={} panel_state=0x{:x} console_rx={} console_tx_ok={} console_tx_timeout={} touch={} touch_dropped={} touch_errors={}\r\n",
+            "gud {}x{} up={}s reset={:?} updates={} bytes={} wire={} rejected={} last_rejected=0x{:02x} abandoned={} rx_disabled={} rx_overflow={} decode_errors={} rx_us={} rx_pkts={} decode_us={} swap_us={} spi_us={} idle_us={} starve_us={} bands_written={} pixels_written={} panel_state=0x{:x} console_rx={} console_tx_ok={} console_tx_timeout={} touch={} touch_errors={}\r\n",
             WIDTH,
             HEIGHT,
             uptime_s,
@@ -332,7 +332,6 @@ async fn console_task<'d>(
             STATS.console_tx_ok.load(Ordering::Relaxed),
             STATS.console_tx_timeout.load(Ordering::Relaxed),
             STATS.touch_reports.load(Ordering::Relaxed),
-            STATS.touch_dropped.load(Ordering::Relaxed),
             STATS.touch_errors.load(Ordering::Relaxed),
         );
         for chunk in line.as_bytes().chunks(63) {

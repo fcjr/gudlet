@@ -133,8 +133,10 @@ it; GUD Display maps it onto the virtual display. The interface is only
 added when the controller answers at boot, so a board without touch
 enumerates as before. The descriptor, report encoding and controller driver
 live in the shared `gud-touch` crate; `touch.rs` is the board glue. The
-console line carries `touch=` (reports sent), `touch_dropped=` (host not
-polling) and `touch_errors=` (I2C failures).
+console line carries `touch=` (reports sent) and `touch_errors=` (I2C or
+endpoint failures). A report waits until the host polls, so nothing is
+lost while the host is away; the controller is read again afterwards so the
+current state follows a stale report.
 
 ## Pinout
 

@@ -4,7 +4,8 @@
 //! The controller pulses INT on every change and every scan while a finger
 //! is down. The task waits for that edge, with a short timeout while
 //! touching so a missed pulse never sticks a finger, and a long one while
-//! idle so a wedged INT line still gets noticed.
+//! idle so a wedged INT line still gets noticed. Reports go out when the
+//! host polls; a host that is away simply gets the latest state later.
 
 use core::sync::atomic::Ordering;
 
@@ -55,15 +56,17 @@ pub async fn touch_task(mut hid: Writer, mut controller: Controller, mut int: In
         let point = point.map(|p| (p.x.min(WIDTH - 1), p.y.min(HEIGHT - 1)));
         let scan_time = (Instant::now().as_micros() / 100) as u16;
         if let Some(report) = tracker.update(point, scan_time) {
-            // A host that stopped polling the endpoint (suspend, no driver)
-            // must not hold the reader; drop the report rather than wait.
-            match with_timeout(Duration::from_millis(100), hid.write(&report.to_bytes())).await {
-                Ok(Ok(())) => {
+            // Waits for the host to poll, as a HID device does: nothing is
+            // lost while it is away, and the next turn of the loop reads the
+            // controller again so a stale report is followed by the current
+            // state. Disabled means unconfigured; the wait above paces that.
+            match hid.write(&report.to_bytes()).await {
+                Ok(()) => {
                     LAST_REPORT.store(&report);
                     STATS.touch_reports.fetch_add(1, Ordering::Relaxed);
                 }
-                _ => {
-                    STATS.touch_dropped.fetch_add(1, Ordering::Relaxed);
+                Err(_) => {
+                    STATS.touch_errors.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }

@@ -12,8 +12,8 @@ On Linux, use a kernel with the `gud` driver enabled.
 
 | Board | Status |
 |---|---|
-| [Waveshare ESP32-S3-Touch-LCD-1.69](https://www.waveshare.com/esp32-s3-touch-lcd-1.69.htm) | Tested on hardware with GUD Display on macOS; supports LZ4 compression |
-| [Waveshare RP2040-Touch-LCD-1.69](https://www.waveshare.com/rp2040-touch-lcd-1.69.htm) | LZ4, multicore and SPI DMA tested; USB stalls under sustained motion remain under investigation |
+| [Waveshare ESP32-S3-Touch-LCD-1.69](https://www.waveshare.com/esp32-s3-touch-lcd-1.69.htm) | Tested on hardware with GUD Display on macOS, including LZ4 compression, touch and rotation |
+| [Waveshare RP2040-Touch-LCD-1.69](https://www.waveshare.com/rp2040-touch-lcd-1.69.htm) | LZ4, multicore and SPI DMA tested; touch and rotation build but are untested on hardware; USB stalls under sustained motion remain under investigation |
 
 The display is 240×280 pixels. It advertises the GUD rotation property, so
 the host can turn it in hardware: on Linux the `gud` driver exposes it as
@@ -75,13 +75,17 @@ and wait for the `RPI-RP2` drive. Then run `just flash rp2040`. See the
 On macOS, launch [GUD Display](https://github.com/fcjr/gud-display-mac) and
 grant Screen Recording permission when requested. The board appears in
 System Settings > Displays, where you can arrange it beside your main
-screen or enable mirroring. Use the app's menu to adjust brightness.
+screen or enable mirroring. Use the app's menu to adjust brightness, rotate
+the panel, and switch touch off or on. Touch needs the app to be granted
+Input Monitoring and Accessibility; the app asks once a touch board is
+plugged in and its menu shows what is still missing.
 
 On Linux, the `gud` driver handles the USB display. Your desktop's display
 settings control its arrangement. This firmware has been tested with the
 Mac app; Linux hardware testing is still pending.
 
-To rotate the panel, use the host: GUD Display's Rotation menu on macOS, or
+To rotate the panel, use the host: GUD Display's Rotation menu on macOS
+(or pick the landscape resolution for the display in System Settings), or
 the plane rotation property on Linux. The firmware turns the panel's
 addressing, so no rebuild is needed.
 
