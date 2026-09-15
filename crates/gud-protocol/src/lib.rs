@@ -308,9 +308,11 @@ impl Protocol {
         let d = &self.display;
         if width == 0
             || height == 0
-            || x + width > d.width as u32
-            || y + height > d.height as u32
-            || length != width * height * BYTES_PER_PIXEL
+            || x > d.width as u32
+            || width > d.width as u32 - x
+            || y > d.height as u32
+            || height > d.height as u32 - y
+            || width.checked_mul(height).and_then(|n| n.checked_mul(BYTES_PER_PIXEL)) != Some(length)
             || (d.max_buffer_size != 0 && length > d.max_buffer_size)
         {
             return Err(status::INVALID_PARAMETER);
@@ -374,10 +376,10 @@ impl Protocol {
 
     fn state_commit(&mut self, sink: &mut impl FnMut(Command) -> Result<(), u8>) -> Result<(), u8> {
         if self.pending_brightness != self.brightness {
-            self.brightness = self.pending_brightness;
             if self.enabled {
-                sink(Command::Brightness(self.brightness))?;
+                sink(Command::Brightness(self.pending_brightness))?;
             }
+            self.brightness = self.pending_brightness;
         }
         Ok(())
     }
@@ -390,9 +392,10 @@ impl Protocol {
         if on == self.enabled {
             return Ok(());
         }
-        self.enabled = on;
         sink(Command::Enable(on))?;
-        sink(Command::Brightness(if on { self.brightness } else { 0 }))
+        sink(Command::Brightness(if on { self.brightness } else { 0 }))?;
+        self.enabled = on;
+        Ok(())
     }
 }
 
@@ -492,6 +495,10 @@ mod tests {
         );
 
         let bad = [
+            set_buffer(u32::MAX, 0, 1, 1, 2, 0, 0),
+            set_buffer(0, u32::MAX, 1, 1, 2, 0, 0),
+            set_buffer(1, 0, u32::MAX, 1, 2, 0, 0),
+            set_buffer(0, 1, 1, u32::MAX, 2, 0, 0),
             set_buffer(0, 0, 0, 10, 0, 0, 0),
             set_buffer(200, 0, 41, 10, 41 * 10 * 2, 0, 0),
             set_buffer(0, 271, 10, 10, 200, 0, 0),
@@ -531,6 +538,31 @@ mod tests {
         let r = p.control_out(req::SET_BUFFER, &set_buffer(0, 0, 10, 10, 200, 0, 0), |_| Err(status::PROTOCOL_ERROR));
         assert_eq!(r, Err(status::PROTOCOL_ERROR));
         assert_eq!(p.status(), status::PROTOCOL_ERROR);
+    }
+
+    #[test]
+    fn band_limit_applies_to_decoded_bytes() {
+        let mut p = Protocol::new(Display::new(240, 280).with_lz4(48 * 1024));
+        for compression in [0, COMPRESSION_LZ4] {
+            assert_eq!(collect(&mut p, req::SET_BUFFER,
+                &set_buffer(0, 0, 240, 102, 48960, compression, 200)).0, Ok(()));
+            assert_eq!(collect(&mut p, req::SET_BUFFER,
+                &set_buffer(0, 0, 240, 103, 49440, compression, 200)).0,
+                Err(status::INVALID_PARAMETER));
+        }
+    }
+
+    #[test]
+    fn failed_state_commands_can_be_retried() {
+        let mut p = Protocol::new(RAW);
+        collect(&mut p, req::SET_STATE_CHECK, &state(&[(PROPERTY_BACKLIGHT_BRIGHTNESS, 40)])).0.unwrap();
+        assert!(p.control_out(req::SET_STATE_COMMIT, &[], |_| Err(status::PROTOCOL_ERROR)).is_err());
+        assert_eq!(p.brightness(), 100);
+        assert_eq!(collect(&mut p, req::SET_STATE_COMMIT, &[]).1, [Command::Brightness(40)]);
+        assert!(p.control_out(req::SET_DISPLAY_ENABLE, &[0], |_| Err(status::PROTOCOL_ERROR)).is_err());
+        assert!(p.enabled());
+        assert_eq!(collect(&mut p, req::SET_DISPLAY_ENABLE, &[0]).1,
+            [Command::Enable(false), Command::Brightness(0)]);
     }
 
     #[test]

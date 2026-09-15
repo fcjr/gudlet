@@ -13,7 +13,7 @@ On Linux, use a kernel with the `gud` driver enabled.
 | Board | Status |
 |---|---|
 | [Waveshare ESP32-S3-Touch-LCD-1.69](https://www.waveshare.com/esp32-s3-touch-lcd-1.69.htm) | Tested on hardware with GUD Display on macOS; supports LZ4 compression |
-| [Waveshare RP2040-Touch-LCD-1.69](https://www.waveshare.com/rp2040-touch-lcd-1.69.htm) | Builds successfully; not yet tested on hardware |
+| [Waveshare RP2040-Touch-LCD-1.69](https://www.waveshare.com/rp2040-touch-lcd-1.69.htm) | LZ4, multicore and SPI DMA tested; USB stalls under sustained motion remain under investigation |
 
 The display is 240×280 pixels, or 280×240 with the landscape build option.
 Both boards support brightness control. Touch input and the boards' other
@@ -102,8 +102,9 @@ just build rp2040
 just check           # run shared tests and build both firmware targets
 ```
 
-Both boards share the GUD protocol implementation in `crates/gud-protocol`
-and the ST7789 panel driver in `crates/gud-panel`. USB handling and board
+Both boards share the GUD protocol implementation in `crates/gud-protocol`,
+the bounded LZ4 decoder and pipeline types in `crates/gud-pipeline`, and the
+ST7789 panel driver in `crates/gud-panel`. USB handling and board
 setup live under `firmware/`. The ESP32-S3 uses a patched Embassy USB driver
 under `vendor/` to receive multiple packets per transfer.
 

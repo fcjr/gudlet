@@ -1,8 +1,8 @@
 # gudlet on ESP32-S3
 
 GUD firmware for the Waveshare ESP32-S3-Touch-LCD-1.69, built on esp-hal and
-embassy-usb. The protocol handling and the panel driver come from the shared
-crates (see the [top-level README](../../README.md)); this crate is the USB
+embassy-usb. The protocol, bounded LZ4 decoder, pipeline types and panel driver
+come from the shared crates (see the [top-level README](../../README.md)); this crate is the USB
 adapter, the two-core pipeline and the board bring-up.
 
 ## How it performs

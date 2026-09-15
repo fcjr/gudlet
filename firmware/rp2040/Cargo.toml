@@ -8,7 +8,10 @@ license.workspace = true
 [dependencies]
 gud-protocol.workspace = true
 gud-panel.workspace = true
+gud-pipeline.workspace = true
 embedded-hal.workspace = true
+static_cell = "2"
+portable-atomic = { version = "1", features = ["critical-section"] }
 cortex-m = "0.7"
 cortex-m-rt = "0.7"
 panic-halt = "1.0"

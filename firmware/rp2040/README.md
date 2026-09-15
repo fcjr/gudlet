@@ -2,7 +2,7 @@
 
 [GUD (Generic USB Display)](https://github.com/notro/gud/wiki) firmware for the
 [Waveshare RP2040-Touch-LCD-1.69](https://www.waveshare.com/rp2040-touch-lcd-1.69.htm).
-The protocol handling, packet byte-swapping and panel driver come from the
+The protocol, band decoding, cross-core job types and panel driver come from the
 shared crates (see the [top-level README](../../README.md)); this crate is
 the usb-device adapter and the board bring-up.
 
@@ -14,15 +14,52 @@ requests describe the panel (RGB565, one fixed 240×280 mode, a backlight
 brightness property) and announce each framebuffer update; the pixels follow
 on the bulk endpoint.
 
-There is no framebuffer on the device. `SET_BUFFER` opens an ST7789 RAM write
-window matching the update rectangle, and each 64-byte bulk packet is
-byte-swapped and pushed out over SPI as it arrives. The panel's auto-increment
-inside the window lines up exactly with the tightly packed rectangle the host
-sends, so the device can never fall behind the host or run out of memory.
+There is no full framebuffer. Core 0 receives raw RGB565 or LZ4 blocks into
+three 48 KiB input buffers and queues complete bands. Core 1 decompresses,
+byte-swaps and sends pixels over 31.25 MHz SPI using DMA. Two 8 KiB DMA buffers
+let copying and the next band's decoding overlap the current transfer.
+The CPU and peripheral clocks stay at the default 125 MHz. The panel uses
+the original vendor-demo SPI rate; 62.5 MHz needs visual hardware validation.
 
-The RP2040 is a full-speed USB device (12 Mbit/s), so a full-screen update
-(134 KB) takes roughly 130 ms. Expect around 7 fps for full-screen motion and
-much better for small damage rectangles.
+`max_buffer_size` is 49,152 decoded bytes. Hosts must split larger updates into
+bands, including compressed updates whose decoded size exceeds that limit.
+A portrait full-screen update needs three bands of 102, 102 and 76 rows.
+GUD Display on macOS already uses the advertised limit to split updates.
+
+The shared `gud-pipeline` crate provides the job queues, exact payload tracking,
+and bounded LZ4 decode path used by both boards. USB and DMA adapters stay
+board-specific. When all input buffers are busy, USB NAKs provide backpressure.
+A new `SET_BUFFER` is queued behind the previous payload, including its final
+ACKed packet. A payload that stops arriving for two seconds triggers a reset
+and USB re-enumeration, as on the ESP32-S3.
+
+The pipeline uses 208 KiB for pixel buffers plus an 8 KiB core 1 stack. The
+linker reserves at least 16 KiB for core 0's stack. There is no heap or PSRAM.
+The ESP32-S3 has enough memory for whole-frame input buffers and a USB driver
+that batches packets. The RP2040 USB adapter still services 64-byte packets,
+so equal architecture does not imply equal frame rates. A two-minute animation and window-movement test streamed frames but reproduced
+USB control timeouts. Stable FPS parity with the ESP32-S3 has not been established.
+
+## Diagnostics and validation
+
+The CDC console prints cumulative counters once per second at 115200 baud:
+`rx`, `bytes`, and `wire` count complete payloads and their decoded/wire sizes.
+`done` and `written` count completed panel bands and pixel bytes, only after
+DMA and the SPI shift register have drained. `decode_errors` counts malformed
+compressed bands. `rejected` and `last` describe failed control requests.
+`bl` reports the applied backlight duty, `on` the last panel-enable command
+completed by core 1, `spi` the SPI clock in Hz, and `up` seconds since boot.
+For an FPS comparison, divide the change in `written` by the frame size and
+elapsed time, using the same animation and orientation on both boards.
+Do not compare `rx` directly to the ESP32-S3's full-frame update count.
+
+`cargo test` at the repository root exercises the shared decoder and protocol,
+and compiles this board's actual USB adapter against a fake bus. It checks
+packet boundaries, queued updates, exhausted buffers, reset ownership, payload
+overruns and stalled transfers. Both portrait and landscape builds should pass
+before flashing. Raw color bars have been confirmed visible on the panel.
+Sustained motion testing still reproduces intermittent USB control timeouts;
+the pipeline is not yet validated for reliable continuous use.
 
 ## Building
 
@@ -44,7 +81,8 @@ just features=landscape build rp2040
 
 ## Flashing
 
-This crate has not been run on hardware yet; the ESP32-S3 crate has.
+The optimized pipeline has been flashed and stress-tested, but USB stability
+remains unresolved.
 
 1. Hold the **BOOT** button and tap **RESET** (or hold BOOT while plugging the
    board in). A drive named `RPI-RP2` mounts.
@@ -77,7 +115,7 @@ the driver offsets internally.
 | Request | Behaviour |
 |---|---|
 | `GET_STATUS` | Status of the last request |
-| `GET_DESCRIPTOR` | Magic, version 1, no flags, no compression, unlimited buffer, fixed 240×280 |
+| `GET_DESCRIPTOR` | Magic, version 1, no flags, LZ4, 49,152-byte decoded buffer limit, fixed 240×280 |
 | `GET_FORMATS` | `RGB565` only |
 | `GET_PROPERTIES` | none |
 | `GET_CONNECTORS` | one `PANEL` connector, no status polling |
@@ -89,11 +127,11 @@ the driver offsets internally.
 | `SET_STATE_COMMIT` | applies brightness |
 | `SET_CONTROLLER_ENABLE` | accepted |
 | `SET_DISPLAY_ENABLE` | panel DISPON/DISPOFF and backlight |
-| `SET_BUFFER` | validates the rectangle and opens the panel window |
+| `SET_BUFFER` | validates a bounded rectangle and queues its raw or LZ4 payload |
 | `SET_CONNECTOR_FORCE_DETECT` | accepted |
 
-Anything else stalls with `REQUEST_NOT_SUPPORTED`. Compressed transfers are
-rejected with `INVALID_PARAMETER` (compression is not advertised).
+Anything else stalls with `REQUEST_NOT_SUPPORTED`. Invalid rectangles, oversized
+decoded bands and unsupported compression types return `INVALID_PARAMETER`.
 
 ## Credits
 

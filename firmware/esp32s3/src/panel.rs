@@ -203,24 +203,16 @@ where
             };
             match job {
                 PanelJob::Band { payload, rect } => {
-                    let length = rect.length as usize;
-                    let pixels: &mut [u8] = if rect.compressed {
-                        let started = Instant::now();
-                        let result = lz4_flex::block::decompress_into(
-                            &payload[..rect.payload as usize],
-                            &mut decoded[..length],
-                        );
-                        account(&STATS.decode_us, started);
-                        match result {
-                            Ok(n) if n == length => &mut decoded[..length],
-                            _ => {
-                                STATS.decode_errors.fetch_add(1, Ordering::Relaxed);
-                                let _ = free.try_send(payload);
-                                continue;
-                            }
+                    let started = Instant::now();
+                    let result = gud_pipeline::decode_pixels(&rect, payload, decoded);
+                    account(&STATS.decode_us, started);
+                    let pixels = match result {
+                        Ok(pixels) => pixels,
+                        Err(_) => {
+                            STATS.decode_errors.fetch_add(1, Ordering::Relaxed);
+                            let _ = free.try_send(payload);
+                            continue;
                         }
-                    } else {
-                        &mut payload[..length]
                     };
 
                     // Host sends little-endian RGB565; the panel wants the

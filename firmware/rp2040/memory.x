@@ -13,3 +13,7 @@ SECTIONS {
         KEEP(*(.boot2));
     } > BOOT2
 } INSERT BEFORE .text;
+
+/* Band buffers and core 1 stack are static. Reserve room for core 0 as the
+   pipeline grows, instead of allowing a successful link with no stack space. */
+ASSERT(_stack_start - _stack_end >= 16K, "RP2040 needs at least 16 KiB for core 0 stack");

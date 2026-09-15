@@ -13,16 +13,15 @@
 
 use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Channel;
 use embassy_time::{with_timeout, Duration, Instant};
 use embassy_usb::control::{InResponse, OutResponse, Recipient, Request, RequestType};
 use embassy_usb::driver::{EndpointError, EndpointOut};
 use embassy_usb::types::InterfaceNumber;
 use embassy_usb::Handler;
 use gud_panel::{FRAME_BYTES, HEIGHT, WIDTH};
+use gud_pipeline::PayloadProgress;
 use gud_protocol::{status, Display, Protocol};
-pub use gud_protocol::{Command, Rect, BULK_PACKET_SIZE};
+pub use gud_protocol::{Command, BULK_PACKET_SIZE};
 
 /// Bytes requested per bulk read; the patched driver delivers up to this much
 /// per wake-up (see vendor/README.md).
@@ -51,20 +50,10 @@ pub trait Backlight {
     fn set_brightness(&mut self, percent: u8);
 }
 
-/// Work for the panel worker, in order. `payload` holds the bytes exactly as
-/// they came off USB (compressed or raw, per `rect`).
-pub enum PanelJob {
-    Band {
-        payload: &'static mut Band,
-        rect: Rect,
-    },
-    Enable(bool),
-}
-
-pub type JobChannel = Channel<CriticalSectionRawMutex, PanelJob, 4>;
-pub type FreeChannel = Channel<CriticalSectionRawMutex, &'static mut Band, NUM_BANDS>;
-
-pub type CommandChannel = Channel<CriticalSectionRawMutex, Command, 8>;
+pub type PanelJob = gud_pipeline::PanelJob<BAND_BYTES>;
+pub type JobChannel = gud_pipeline::JobChannel<BAND_BYTES>;
+pub type FreeChannel = gud_pipeline::FreeChannel<BAND_BYTES, NUM_BANDS>;
+pub use gud_pipeline::CommandChannel;
 
 /// Counters for the debug console.
 pub struct Stats {
@@ -214,7 +203,11 @@ impl Handler for GudHandler {
         }
 
         let commands = self.commands;
+        // One control request emits at most two commands. Reserve room before
+        // mutating protocol state so enable/backlight cannot be partially queued.
+        let room = commands.free_capacity() >= 2;
         let result = self.protocol.control_out(req.request, data, |command| {
+            if !room { return Err(status::PROTOCOL_ERROR); }
             commands.try_send(command).map_err(|_| status::PROTOCOL_ERROR)?;
             if let Command::Update(rect) = command {
                 STATS.updates.fetch_add(1, Ordering::Relaxed);
@@ -244,10 +237,11 @@ impl Handler for GudHandler {
 /// stream.
 async fn read_payload<E: EndpointOut>(endpoint: &mut E, dst: &mut [u8]) -> bool {
     let mut packet = [0u8; BULK_PACKET_SIZE as usize];
-    let mut filled = 0;
+    let mut progress = PayloadProgress::new(dst.len());
     let started = Instant::now();
-    while filled < dst.len() {
-        let space = dst.len() - filled;
+    while !progress.complete() {
+        let filled = progress.filled();
+        let space = progress.remaining();
         // Read straight into place, as many whole packets as fit; the tail of
         // the payload goes through a bounce buffer since reads need packet room.
         let direct = space >= BULK_PACKET_SIZE as usize;
@@ -278,11 +272,13 @@ async fn read_payload<E: EndpointOut>(endpoint: &mut E, dst: &mut [u8]) -> bool 
             }
         };
         STATS.rx_packets.fetch_add(1, Ordering::Relaxed);
-        let take = n.min(space);
-        if !direct {
-            dst[filled..filled + take].copy_from_slice(&packet[..take]);
+        if progress.advance(n).is_err() {
+            STATS.rx_overflow.fetch_add(1, Ordering::Relaxed);
+            crate::payload_stall();
         }
-        filled += take;
+        if !direct {
+            dst[filled..filled + n].copy_from_slice(&packet[..n]);
+        }
     }
     account(&STATS.rx_us, started);
     true

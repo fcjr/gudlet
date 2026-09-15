@@ -1,0 +1,16 @@
+[package]
+name = "gud-pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gud-protocol.workspace = true
+embassy-sync = "0.7"
+lz4_flex = { version = "0.14", default-features = false }
+
+[dev-dependencies]
+critical-section = { version = "1", features = ["std"] }
+gud-panel.workspace = true
+embedded-hal.workspace = true
+usb-device = "0.3"
