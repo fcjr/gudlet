@@ -13,6 +13,7 @@
 
 mod gud;
 mod panel;
+mod usb;
 
 use core::fmt::Write;
 
@@ -25,7 +26,7 @@ use gud_protocol::{USB_PID, USB_VID};
 use hal::fugit::RateExtU32;
 use hal::gpio::{FunctionSpi, PinState};
 use hal::pac;
-use hal::usb::UsbBus;
+use usb::UsbBus;
 use hal::Clock;
 use usb_device::bus::UsbBusAllocator;
 use usb_device::device::{StringDescriptors, UsbDeviceBuilder, UsbVidPid};

@@ -61,6 +61,10 @@ before flashing. Raw color bars have been confirmed visible on the panel.
 Sustained motion testing still reproduces intermittent USB control timeouts;
 the pipeline is not yet validated for reliable continuous use.
 
+The local USB bus wrapper skips redundant EP0 unstall writes to avoid a
+suspected race with the controller updating its receive buffer. This workaround
+builds in both orientations but has not been flashed or tested on hardware.
+
 ## Building
 
 Requires a stable Rust toolchain with the `thumbv6m-none-eabi` target and
