@@ -15,9 +15,15 @@ On Linux, use a kernel with the `gud` driver enabled.
 | [Waveshare ESP32-S3-Touch-LCD-1.69](https://www.waveshare.com/esp32-s3-touch-lcd-1.69.htm) | Tested on hardware with GUD Display on macOS; supports LZ4 compression |
 | [Waveshare RP2040-Touch-LCD-1.69](https://www.waveshare.com/rp2040-touch-lcd-1.69.htm) | LZ4, multicore and SPI DMA tested; USB stalls under sustained motion remain under investigation |
 
-The display is 240×280 pixels, or 280×240 with the landscape build option.
-Both boards support brightness control. Touch input and the boards' other
-sensors are not implemented.
+The display is 240×280 pixels. It advertises the GUD rotation property, so
+the host can turn it in hardware: on Linux the `gud` driver exposes it as
+the plane's DRM rotation property for the compositor to use, and GUD
+Display on macOS has a Rotation menu for it. Touch is reported in the
+glass's own frame and the host turns it to match.
+Both boards support brightness control and report the panel's capacitive
+touch to the host as a standard USB HID touch screen, so Linux and GUD
+Display on macOS get tap and drag with nothing extra to install. The boards'
+other sensors are not implemented.
 
 These are USB full-speed devices. Frame rate depends on how much of the
 screen changes and how well the content compresses. An ESP32-S3 test with
@@ -75,11 +81,9 @@ On Linux, the `gud` driver handles the USB display. Your desktop's display
 settings control its arrangement. This firmware has been tested with the
 Mac app; Linux hardware testing is still pending.
 
-To rotate the panel at build time:
-
-```sh
-just features=landscape flash esp32s3
-```
+To rotate the panel, use the host: GUD Display's Rotation menu on macOS, or
+the plane rotation property on Linux. The firmware turns the panel's
+addressing, so no rebuild is needed.
 
 To identify the connected board or read its diagnostic counters:
 

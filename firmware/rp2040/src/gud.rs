@@ -9,7 +9,7 @@ use usb_device::control::{Recipient, Request, RequestType};
 
 pub const BAND_BYTES: usize = 48 * 1024;
 pub const NUM_BANDS: usize = 3;
-pub const DISPLAY: Display = Display::new(WIDTH, HEIGHT).with_lz4(BAND_BYTES as u32);
+pub const DISPLAY: Display = Display::new(WIDTH, HEIGHT).with_lz4(BAND_BYTES as u32).with_rotation();
 pub type Band = [u8; BAND_BYTES];
 pub type PanelJob = gud_pipeline::PanelJob<BAND_BYTES>;
 pub type JobChannel = gud_pipeline::JobChannel<BAND_BYTES>;
@@ -176,6 +176,7 @@ impl<'a, B: UsbBus, BL: SetDutyCycle> GudDevice<'a, B, BL> {
                     }
                 },
                 Command::Enable(on) => self.pending_job = Some(PanelJob::Enable(on)),
+                Command::Rotation(rotation) => self.pending_job = Some(PanelJob::Rotate(rotation)),
                 Command::Brightness(percent) => {
                     if self.backlight.set_duty_cycle_percent(percent).is_ok() {
                         self.stats.brightness = percent;

@@ -9,6 +9,7 @@ license.workspace = true
 gud-protocol.workspace = true
 gud-panel.workspace = true
 gud-pipeline.workspace = true
+gud-touch = { workspace = true, features = ["usb-device"] }
 embedded-hal.workspace = true
 static_cell = "2"
 portable-atomic = { version = "1", features = ["critical-section"] }
@@ -20,5 +21,3 @@ rp2040-hal = { version = "0.11", features = ["critical-section-impl", "rt"] }
 usb-device = "0.3"
 usbd-serial = "0.2"
 
-[features]
-landscape = ["gud-panel/landscape"]

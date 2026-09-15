@@ -65,6 +65,58 @@ const CONNECTOR_TYPE_PANEL: u8 = 0;
 const CONNECTOR_STATUS_CONNECTED: u8 = 0x01;
 const MODE_FLAG_PREFERRED: u32 = 1 << 10;
 const PROPERTY_BACKLIGHT_BRIGHTNESS: u16 = 12;
+/// Plane rotation; `GET_PROPERTIES` returns the supported bitmask.
+const PROPERTY_ROTATION: u16 = 50;
+
+/// `GUD_ROTATION_*` bits, which are the DRM rotation bits.
+pub mod rotation {
+    pub const ROTATE_0: u64 = 1 << 0;
+    pub const ROTATE_90: u64 = 1 << 1;
+    pub const ROTATE_180: u64 = 1 << 2;
+    pub const ROTATE_270: u64 = 1 << 3;
+    pub const REFLECT_X: u64 = 1 << 4;
+    pub const REFLECT_Y: u64 = 1 << 5;
+    pub const ALL_ROTATIONS: u64 = ROTATE_0 | ROTATE_90 | ROTATE_180 | ROTATE_270;
+}
+
+/// Plane rotation, counter-clockwise as DRM defines it. The mode stays the
+/// panel's; for 90 and 270 the host's framebuffer has width and height
+/// swapped and the device turns it to fit the glass.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Rotation {
+    #[default]
+    Rotate0,
+    Rotate90,
+    Rotate180,
+    Rotate270,
+}
+
+impl Rotation {
+    pub const fn bit(self) -> u64 {
+        match self {
+            Self::Rotate0 => rotation::ROTATE_0,
+            Self::Rotate90 => rotation::ROTATE_90,
+            Self::Rotate180 => rotation::ROTATE_180,
+            Self::Rotate270 => rotation::ROTATE_270,
+        }
+    }
+
+    /// Exactly one rotation bit and nothing else; reflections are not offered.
+    pub const fn from_bits(value: u64) -> Option<Self> {
+        match value {
+            rotation::ROTATE_0 => Some(Self::Rotate0),
+            rotation::ROTATE_90 => Some(Self::Rotate90),
+            rotation::ROTATE_180 => Some(Self::Rotate180),
+            rotation::ROTATE_270 => Some(Self::Rotate270),
+            _ => None,
+        }
+    }
+
+    /// The framebuffer is the panel turned on its side.
+    pub const fn swaps_axes(self) -> bool {
+        matches!(self, Self::Rotate90 | Self::Rotate270)
+    }
+}
 
 /// What the device advertises about itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,18 +127,25 @@ pub struct Display {
     pub compression: u8,
     /// Largest uncompressed update the host may send, or 0 for unlimited.
     pub max_buffer_size: u32,
+    /// Supported `rotation::*` bits, or 0 to leave the property out.
+    pub rotations: u64,
 }
 
 impl Display {
     /// A fixed-size RGB565 panel taking raw updates of any size.
     pub const fn new(width: u16, height: u16) -> Self {
-        Self { width, height, compression: 0, max_buffer_size: 0 }
+        Self { width, height, compression: 0, max_buffer_size: 0, rotations: 0 }
     }
 
     /// Accept LZ4 block compressed updates of at most `max_buffer_size`
     /// uncompressed bytes.
     pub const fn with_lz4(self, max_buffer_size: u32) -> Self {
         Self { compression: COMPRESSION_LZ4, max_buffer_size, ..self }
+    }
+
+    /// Offer the four rotations as a plane property.
+    pub const fn with_rotation(self) -> Self {
+        Self { rotations: rotation::ALL_ROTATIONS, ..self }
     }
 
     pub const fn frame_bytes(&self) -> usize {
@@ -154,6 +213,9 @@ pub enum Command {
     Brightness(u8),
     /// Display on/off.
     Enable(bool),
+    /// Turn the panel's addressing so the host's rotated framebuffer lands
+    /// upright; later updates are in the rotated frame.
+    Rotation(Rotation),
 }
 
 fn property(buf: &mut [u8], prop: u16, value: u64) -> usize {
@@ -170,12 +232,18 @@ fn le_u32(b: &[u8]) -> u32 {
     u32::from_le_bytes([b[0], b[1], b[2], b[3]])
 }
 
+fn le_u64(b: &[u8]) -> u64 {
+    u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+}
+
 /// Control request handler and connector state.
 pub struct Protocol {
     display: Display,
     status: u8,
     brightness: u8,
     pending_brightness: u8,
+    rotation: Rotation,
+    pending_rotation: Rotation,
     enabled: bool,
 }
 
@@ -186,12 +254,27 @@ impl Protocol {
             status: status::OK,
             brightness: 100,
             pending_brightness: 100,
+            rotation: Rotation::Rotate0,
+            pending_rotation: Rotation::Rotate0,
             enabled: true,
         }
     }
 
     pub fn display(&self) -> &Display {
         &self.display
+    }
+
+    pub fn rotation(&self) -> Rotation {
+        self.rotation
+    }
+
+    /// Size of the framebuffer the host sends under the current rotation.
+    pub fn framebuffer_size(&self) -> (u16, u16) {
+        if self.rotation.swaps_axes() {
+            (self.display.height, self.display.width)
+        } else {
+            (self.display.width, self.display.height)
+        }
     }
 
     /// Status of the last request, as `GET_STATUS` reports it.
@@ -228,7 +311,10 @@ impl Protocol {
                 buf[0] = PIXEL_FORMAT_RGB565;
                 1
             }
-            req::GET_PROPERTIES => 0,
+            req::GET_PROPERTIES => match self.display.rotations {
+                0 => 0,
+                supported => property(buf, PROPERTY_ROTATION, supported),
+            },
             req::GET_CONNECTORS => {
                 buf[..5].copy_from_slice(&[CONNECTOR_TYPE_PANEL, 0, 0, 0, 0]);
                 5
@@ -306,12 +392,13 @@ impl Protocol {
         let compressed_length = le_u32(&data[21..]);
 
         let d = &self.display;
+        let (fb_width, fb_height) = self.framebuffer_size();
         if width == 0
             || height == 0
-            || x > d.width as u32
-            || width > d.width as u32 - x
-            || y > d.height as u32
-            || height > d.height as u32 - y
+            || x > fb_width as u32
+            || width > fb_width as u32 - x
+            || y > fb_height as u32
+            || height > fb_height as u32 - y
             || width.checked_mul(height).and_then(|n| n.checked_mul(BYTES_PER_PIXEL)) != Some(length)
             || (d.max_buffer_size != 0 && length > d.max_buffer_size)
         {
@@ -357,15 +444,22 @@ impl Protocol {
         }
 
         self.pending_brightness = self.brightness;
+        self.pending_rotation = self.rotation;
         for prop in data[26..].chunks_exact(10) {
             let id = le_u16(prop);
-            let value = le_u32(&prop[2..]);
+            let value = le_u64(&prop[2..]);
             match id {
                 PROPERTY_BACKLIGHT_BRIGHTNESS => {
                     if value > 100 {
                         return Err(status::INVALID_PARAMETER);
                     }
                     self.pending_brightness = value as u8;
+                }
+                PROPERTY_ROTATION => {
+                    match Rotation::from_bits(value) {
+                        Some(r) if r.bit() & self.display.rotations != 0 => self.pending_rotation = r,
+                        _ => return Err(status::INVALID_PARAMETER),
+                    }
                 }
                 // Unknown properties are ignored for forward compatibility.
                 _ => {}
@@ -375,6 +469,10 @@ impl Protocol {
     }
 
     fn state_commit(&mut self, sink: &mut impl FnMut(Command) -> Result<(), u8>) -> Result<(), u8> {
+        if self.pending_rotation != self.rotation {
+            sink(Command::Rotation(self.pending_rotation))?;
+            self.rotation = self.pending_rotation;
+        }
         if self.pending_brightness != self.brightness {
             if self.enabled {
                 sink(Command::Brightness(self.pending_brightness))?;
@@ -408,6 +506,7 @@ mod tests {
 
     const RAW: Display = Display::new(240, 280);
     const LZ4: Display = Display::new(240, 280).with_lz4(240 * 280 * 2);
+    const ROTATING: Display = Display::new(240, 280).with_rotation();
 
     fn set_buffer(x: u32, y: u32, w: u32, h: u32, len: u32, compression: u8, clen: u32) -> [u8; 25] {
         let mut d = [0u8; 25];
@@ -588,6 +687,58 @@ mod tests {
         let mut wrong = state(&[]);
         wrong[4] = 0;
         assert_eq!(collect(&mut p, req::SET_STATE_CHECK, &wrong).0, Err(status::INVALID_PARAMETER));
+    }
+
+    #[test]
+    fn rotation_is_advertised_only_when_offered() {
+        let mut buf = [0u8; MAX_IN_LEN];
+        let mut p = Protocol::new(RAW);
+        assert_eq!(p.control_in(req::GET_PROPERTIES, 0, &mut buf), Ok(0));
+        let mut p = Protocol::new(ROTATING);
+        assert_eq!(p.control_in(req::GET_PROPERTIES, 0, &mut buf), Ok(10));
+        assert_eq!(le_u16(&buf), PROPERTY_ROTATION);
+        assert_eq!(le_u64(&buf[2..]), rotation::ALL_ROTATIONS);
+        // A host that sends it to a device that did not offer it is wrong.
+        let mut p = Protocol::new(RAW);
+        assert_eq!(
+            collect(&mut p, req::SET_STATE_CHECK, &state(&[(PROPERTY_ROTATION, rotation::ROTATE_90 as u32)])).0,
+            Err(status::INVALID_PARAMETER)
+        );
+    }
+
+    #[test]
+    fn rotation_is_staged_committed_and_turns_the_framebuffer() {
+        let mut p = Protocol::new(ROTATING);
+        let (r, cmds) = collect(&mut p, req::SET_STATE_CHECK, &state(&[(PROPERTY_ROTATION, rotation::ROTATE_90 as u32)]));
+        assert_eq!(r, Ok(()));
+        assert!(cmds.is_empty());
+        assert_eq!(p.rotation(), Rotation::Rotate0);
+        // Still portrait until the commit: a landscape rect is rejected.
+        assert_eq!(collect(&mut p, req::SET_BUFFER, &set_buffer(0, 0, 280, 240, 280 * 240 * 2, 0, 0)).0,
+            Err(status::INVALID_PARAMETER));
+        let (r, cmds) = collect(&mut p, req::SET_STATE_COMMIT, &[]);
+        assert_eq!(r, Ok(()));
+        assert_eq!(cmds, [Command::Rotation(Rotation::Rotate90)]);
+        assert_eq!(p.rotation(), Rotation::Rotate90);
+        assert_eq!(p.framebuffer_size(), (280, 240));
+        assert_eq!(collect(&mut p, req::SET_BUFFER, &set_buffer(0, 0, 280, 240, 280 * 240 * 2, 0, 0)).0, Ok(()));
+        assert_eq!(collect(&mut p, req::SET_BUFFER, &set_buffer(0, 0, 240, 280, 240 * 280 * 2, 0, 0)).0,
+            Err(status::INVALID_PARAMETER));
+        // Unchanged rotation commits nothing; a state without the property keeps it.
+        let _ = collect(&mut p, req::SET_STATE_CHECK, &state(&[(PROPERTY_ROTATION, rotation::ROTATE_90 as u32)]));
+        assert!(collect(&mut p, req::SET_STATE_COMMIT, &[]).1.is_empty());
+        let _ = collect(&mut p, req::SET_STATE_CHECK, &state(&[]));
+        assert!(collect(&mut p, req::SET_STATE_COMMIT, &[]).1.is_empty());
+        assert_eq!(p.rotation(), Rotation::Rotate90);
+        // 180 keeps portrait dimensions.
+        let _ = collect(&mut p, req::SET_STATE_CHECK, &state(&[(PROPERTY_ROTATION, rotation::ROTATE_180 as u32)]));
+        assert_eq!(collect(&mut p, req::SET_STATE_COMMIT, &[]).1, [Command::Rotation(Rotation::Rotate180)]);
+        assert_eq!(p.framebuffer_size(), (240, 280));
+        // Reflections and combinations are not offered.
+        for bad in [rotation::REFLECT_X, rotation::ROTATE_0 | rotation::ROTATE_90, 0, 1 << 6] {
+            assert_eq!(collect(&mut p, req::SET_STATE_CHECK, &state(&[(PROPERTY_ROTATION, bad as u32)])).0,
+                Err(status::INVALID_PARAMETER));
+        }
     }
 
     #[test]

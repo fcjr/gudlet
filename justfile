@@ -3,7 +3,7 @@
 
 set shell := ["sh", "-eu", "-c"]
 
-# Extra cargo features, e.g. `just features=landscape flash esp32s3`.
+# Extra cargo features, e.g. `just features=debug-strip flash esp32s3`.
 features := ""
 _features := if features == "" { "" } else { "--features " + features }
 

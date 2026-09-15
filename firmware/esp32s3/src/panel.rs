@@ -235,6 +235,11 @@ where
                     let spi = self.spi.as_mut().unwrap();
                     self.lcd.set_display_on(spi, on);
                 }
+                PanelJob::Rotate(rotation) => {
+                    self.close_rect();
+                    let spi = self.spi.as_mut().unwrap();
+                    self.lcd.set_rotation(spi, rotation);
+                }
             }
         }
     }

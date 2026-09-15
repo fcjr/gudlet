@@ -3,6 +3,10 @@
 //! Enumerates as a GUD device (1d50:614d) and streams the host's framebuffer
 //! updates through a bounded LZ4 and DMA pipeline into the ST7789V2 panel.
 //!
+//! The board's CST816 touch controller is exposed as a USB HID touch screen
+//! interface (see `touch.rs`), so the host gets touch through its own HID
+//! stack with nothing to install.
+//!
 //! A CDC-ACM serial port sits beside the GUD interface. It prints a status
 //! line once a second while open, and opening it at 1200 baud reboots the
 //! board into the USB bootloader (the Arduino convention) so the firmware
@@ -13,6 +17,7 @@
 
 mod gud;
 mod panel;
+mod touch;
 mod usb;
 
 use core::fmt::Write;
@@ -24,7 +29,7 @@ use rp2040_hal as hal;
 use gud_panel::{St7789, HEIGHT, WIDTH};
 use gud_protocol::{USB_PID, USB_VID};
 use hal::fugit::RateExtU32;
-use hal::gpio::{FunctionSpi, PinState};
+use hal::gpio::{FunctionI2C, FunctionSpi, Pin, PinState, PullUp};
 use hal::pac;
 use usb::UsbBus;
 use hal::Clock;
@@ -34,6 +39,8 @@ use usb_device::LangID;
 use usbd_serial::SerialPort;
 
 use gud::{Band, FreeChannel, GudDevice, JobChannel, BAND_BYTES};
+use gud_touch::usbd::TouchHidClass;
+use gud_touch::Cst816;
 use hal::dma::DMAExt;
 use hal::multicore::{Multicore, Stack};
 use portable_atomic::Ordering;
@@ -64,6 +71,8 @@ const USB_SERIAL: &str = "GUDRP2040";
 
 /// Opening the serial port at this rate and closing it reboots to BOOTSEL.
 const BOOTSEL_BAUD: u32 = 1200;
+/// The CST816 is rated for 10 to 400 kHz.
+const TOUCH_I2C_HZ: u32 = 400_000;
 const STATUS_INTERVAL_MS: u64 = 1000;
 
 /// Fixed-size line buffer so status lines can be formatted without alloc.
@@ -152,6 +161,17 @@ fn main() -> ! {
     backlight.output_to(pins.gpio25);
     let _ = backlight.set_duty_cycle_percent(0);
 
+    // Touch controller per DEV_Config.h: I2C1 with SDA 6, SCL 7, RST 22,
+    // INT 21. The board has pull-ups on the bus and on INT.
+    let sda: Pin<_, FunctionI2C, PullUp> = pins.gpio6.reconfigure();
+    let scl: Pin<_, FunctionI2C, PullUp> = pins.gpio7.reconfigure();
+    let touch_i2c = hal::I2C::i2c1(pac.I2C1, sda, scl, TOUCH_I2C_HZ.Hz(), &mut pac.RESETS, &clocks.system_clock);
+    let touch_rst = pins.gpio22.into_push_pull_output_in_state(PinState::High);
+    let touch_int = pins.gpio21.into_pull_up_input();
+    let mut touch_controller = Cst816::new(touch_i2c, touch_rst);
+    let touch_present = touch_controller.init(&mut timer).is_ok();
+    let mut touch = touch::Touch::new(touch_controller, touch_int);
+
     let mut lcd = St7789::new(dc, cs, rst);
     lcd.init(&mut spi, &mut timer);
     lcd.show_boot_logo(&mut spi);
@@ -182,6 +202,8 @@ fn main() -> ! {
     // hosts that take the first vendor-class interface find the right one.
     let mut gud = GudDevice::new(&usb_bus, backlight, &JOBS, &FREE);
     let mut serial = SerialPort::new(&usb_bus);
+    // HID touch screen last, and only when there is a controller to report for.
+    let mut hid = touch_present.then(|| TouchHidClass::new(&usb_bus, &touch::REPORT_DESCRIPTOR, &touch::LAST_REPORT));
 
     let strings = StringDescriptors::new(LangID::EN_US)
         .manufacturer("Waveshare")
@@ -201,8 +223,17 @@ fn main() -> ! {
     let mut pending_status: Option<Line> = None;
     let mut status_sent = 0;
     loop {
-        gud.service(timer.get_counter().ticks());
-        usb_dev.poll(&mut [&mut gud, &mut serial]);
+        let now_us = timer.get_counter().ticks();
+        gud.service(now_us);
+        match hid.as_mut() {
+            Some(hid) => {
+                usb_dev.poll(&mut [&mut gud, &mut serial, hid]);
+                touch.service(now_us, hid);
+            }
+            None => {
+                usb_dev.poll(&mut [&mut gud, &mut serial]);
+            }
+        }
 
         if serial.line_coding().data_rate() == BOOTSEL_BAUD && !serial.dtr() {
             hal::rom_data::reset_to_usb_boot(0, 0);
@@ -235,7 +266,7 @@ fn main() -> ! {
             let mut line = Line::new();
             let _ = write!(
                 line,
-                "gud {}x{} rx={} bytes={} wire={} done={} written={} decode_errors={} rejected={} last=0x{:02x} bl={} on={} spi={} up={}\r\n",
+                "gud {}x{} rx={} bytes={} wire={} done={} written={} decode_errors={} rejected={} last=0x{:02x} bl={} on={} spi={} touch={} touch_errors={} up={}\r\n",
                 WIDTH,
                 HEIGHT,
                 stats.updates,
@@ -249,6 +280,8 @@ fn main() -> ! {
                 stats.brightness,
                 panel::ENABLED.load(Ordering::Relaxed),
                 SPI_BAUD_HZ,
+                touch.stats().reports,
+                touch.stats().errors,
                 now.ticks() / 1_000_000
             );
             pending_status = Some(line);

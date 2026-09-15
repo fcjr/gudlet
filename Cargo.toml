@@ -4,13 +4,14 @@ members = [
     "crates/gud-protocol",
     "crates/gud-panel",
     "crates/gud-pipeline",
+    "crates/gud-touch",
     "firmware/esp32s3",
     "firmware/rp2040",
 ]
 # `cargo build`/`cargo test` at the root only touch the host-testable crates.
 # The firmware crates need their own toolchain and target; build them from
 # their directory or with `just` (see justfile).
-default-members = ["crates/gud-protocol", "crates/gud-panel", "crates/gud-pipeline"]
+default-members = ["crates/gud-protocol", "crates/gud-panel", "crates/gud-pipeline", "crates/gud-touch"]
 
 [workspace.package]
 version = "0.1.0"
@@ -21,6 +22,7 @@ license = "MIT"
 gud-protocol = { path = "crates/gud-protocol" }
 gud-panel = { path = "crates/gud-panel" }
 gud-pipeline = { path = "crates/gud-pipeline" }
+gud-touch = { path = "crates/gud-touch" }
 embedded-hal = "1.0"
 
 [profile.release]

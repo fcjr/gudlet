@@ -32,7 +32,7 @@ const BULK_READ_SIZE: usize = 8192;
 /// control round trip costs milliseconds.
 pub const BAND_BYTES: usize = FRAME_BYTES;
 /// What the host is told: fixed RGB565 panel, LZ4 accepted, one frame per update.
-pub const DISPLAY: Display = Display::new(WIDTH, HEIGHT).with_lz4(BAND_BYTES as u32);
+pub const DISPLAY: Display = Display::new(WIDTH, HEIGHT).with_lz4(BAND_BYTES as u32).with_rotation();
 /// Band buffers (in PSRAM) in flight between USB reception and the panel.
 pub const NUM_BANDS: usize = 3;
 
@@ -93,6 +93,11 @@ pub struct Stats {
     pub console_rx_bytes: AtomicU32,
     pub console_tx_ok: AtomicU32,
     pub console_tx_timeout: AtomicU32,
+    /// Touch reports sent, dropped because the host was not polling, and
+    /// controller reads that failed.
+    pub touch_reports: AtomicU32,
+    pub touch_dropped: AtomicU32,
+    pub touch_errors: AtomicU32,
 }
 
 impl Stats {
@@ -122,6 +127,9 @@ impl Stats {
             console_rx_bytes: AtomicU32::new(0),
             console_tx_ok: AtomicU32::new(0),
             console_tx_timeout: AtomicU32::new(0),
+            touch_reports: AtomicU32::new(0),
+            touch_dropped: AtomicU32::new(0),
+            touch_errors: AtomicU32::new(0),
         }
     }
 }
@@ -313,6 +321,7 @@ pub async fn receive_task<E: EndpointOut, B: Backlight>(
                 STATS.panel_state.fetch_or((percent as u32) << 8, Ordering::Relaxed);
                 backlight.set_brightness(percent)
             }
+            Command::Rotation(rotation) => jobs.send(PanelJob::Rotate(rotation)).await,
             Command::Enable(on) => {
                 if on {
                     STATS.panel_state.fetch_or(1, Ordering::Relaxed);

@@ -50,10 +50,6 @@ just build esp32s3        # or `cargo build --release` in this directory
 `rust-toolchain.toml` selects the `esp` toolchain automatically. To present the
 panel rotated 90° as 280×240 instead:
 
-```sh
-just features=landscape build esp32s3
-```
-
 ## Flashing
 
 `just flash esp32s3` (or `cargo run --release` here) runs `scripts/flash.sh`,
@@ -126,9 +122,23 @@ top 36 rows once a second (uptime, console tick, control requests, DTR,
 console bytes in, console writes ok/timed out, updates, bands written). It
 depends on nothing but the panel, so it keeps reporting when USB is dead.
 
+## Touch
+
+The CST816T touch controller is read over I2C and reported as a USB HID
+touch screen interface (HID 1.11, Digitizer usage page: one finger with Tip
+Switch, Contact Identifier, X, Y, Scan Time and Contact Count, plus a
+Contact Count Maximum feature report), placed after the GUD and CDC
+interfaces so their numbers do not change. Linux binds `hid-multitouch` to
+it; GUD Display maps it onto the virtual display. The interface is only
+added when the controller answers at boot, so a board without touch
+enumerates as before. The descriptor, report encoding and controller driver
+live in the shared `gud-touch` crate; `touch.rs` is the board glue. The
+console line carries `touch=` (reports sent), `touch_dropped=` (host not
+polling) and `touch_errors=` (I2C failures).
+
 ## Pinout
 
-From Waveshare's `pin_config.h`. Only the LCD is used; the touch controller,
+From Waveshare's `pin_config.h`. The LCD and touch controller are used; the
 IMU, RTC and buzzer are untouched.
 
 | Signal    | GPIO |
@@ -139,6 +149,10 @@ IMU, RTC and buzzer are untouched.
 | LCD MOSI  | 7    |
 | LCD RST   | 8    |
 | Backlight | 15 (LEDC) |
+| Touch SCL | 10 (I2C0) |
+| Touch SDA | 11 (I2C0) |
+| Touch RST | 13   |
+| Touch INT | 14   |
 | USB D-    | 19   |
 | USB D+    | 20   |
 
@@ -152,14 +166,14 @@ the PHY to the OTG controller, so that port disappears while the app runs.
 | `GET_STATUS` | Status of the last request |
 | `GET_DESCRIPTOR` | Magic, version 1, no flags, LZ4 accepted, one frame per update, fixed 240×280 |
 | `GET_FORMATS` | `RGB565` only |
-| `GET_PROPERTIES` | none |
+| `GET_PROPERTIES` | `ROTATION`: 0, 90, 180 and 270 offered |
 | `GET_CONNECTORS` | one `PANEL` connector, no status polling |
 | `GET_CONNECTOR_PROPERTIES` | `BACKLIGHT_BRIGHTNESS` (0–100) |
 | `GET_CONNECTOR_STATUS` | always connected |
 | `GET_CONNECTOR_MODES` | one preferred 240×280 mode at ~60 Hz |
 | `GET_CONNECTOR_EDID` | empty |
-| `SET_STATE_CHECK` | validates mode/format/connector, stages brightness |
-| `SET_STATE_COMMIT` | applies brightness |
+| `SET_STATE_CHECK` | validates mode/format/connector, stages brightness and rotation |
+| `SET_STATE_COMMIT` | applies brightness; a rotation change reprograms the panel's MADCTL, and later `SET_BUFFER` rectangles are in the rotated framebuffer (280×240 for 90 and 270) |
 | `SET_CONTROLLER_ENABLE` | accepted |
 | `SET_DISPLAY_ENABLE` | panel DISPON/DISPOFF and backlight |
 | `SET_BUFFER` | validates the rectangle and queues the panel window |

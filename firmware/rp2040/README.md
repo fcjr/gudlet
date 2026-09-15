@@ -12,7 +12,8 @@ The board enumerates as `1d50:614d` with one vendor-class interface and a
 single bulk OUT endpoint, which is what the GUD host drivers match on. Control
 requests describe the panel (RGB565, one fixed 240×280 mode, a backlight
 brightness property) and announce each framebuffer update; the pixels follow
-on the bulk endpoint.
+on the bulk endpoint. A CDC console and, when the CST816T answers at boot, a
+USB HID touch screen interface follow it (see [Touch](#touch)).
 
 There is no full framebuffer. Core 0 receives raw RGB565 or LZ4 blocks into
 three 48 KiB input buffers and queues complete bands. Core 1 decompresses,
@@ -56,7 +57,7 @@ Do not compare `rx` directly to the ESP32-S3's full-frame update count.
 `cargo test` at the repository root exercises the shared decoder and protocol,
 and compiles this board's actual USB adapter against a fake bus. It checks
 packet boundaries, queued updates, exhausted buffers, reset ownership, payload
-overruns and stalled transfers. Both portrait and landscape builds should pass
+overruns and stalled transfers. All four rotations should pass
 before flashing. Raw color bars have been confirmed visible on the panel.
 Sustained motion testing still reproduces intermittent USB control timeouts;
 the pipeline is not yet validated for reliable continuous use.
@@ -79,10 +80,6 @@ elf2uf2-rs ../../target/thumbv6m-none-eabi/release/gud-rp2040 gud-rp2040.uf2
 `rust-toolchain.toml` pulls in the target. To present the panel rotated 90° as
 280×240 instead:
 
-```sh
-just features=landscape build rp2040
-```
-
 ## Flashing
 
 The optimized pipeline has been flashed and stress-tested, but USB stability
@@ -96,9 +93,21 @@ remains unresolved.
 The board reboots into the firmware, shows the gudlet boot logo, turns on
 the backlight, and waits for a host.
 
+## Touch
+
+The CST816T touch controller is read over I2C1 from the main loop (when its
+INT line is low, every 10 ms while a finger is down, every 250 ms idle) and
+reported through a HID touch screen interface: HID 1.11, Digitizer usage
+page, one finger with Tip Switch, Contact Identifier, X, Y, Scan Time and
+Contact Count, plus a Contact Count Maximum feature report answered on
+GET_REPORT. The descriptor, report encoding and controller driver live in
+the shared `gud-touch` crate; its `usb-device` feature carries the HID class
+used here, and `touch.rs` is the board glue. The console line carries
+`touch=` (reports sent) and `touch_errors=` (I2C failures).
+
 ## Pinout
 
-From Waveshare's `DEV_Config.h`. Only the LCD is used; the touch controller,
+From Waveshare's `DEV_Config.h`. The LCD and touch controller are used; the
 IMU, RTC and buzzer are left untouched.
 
 | Signal      | GPIO |
@@ -110,6 +119,10 @@ IMU, RTC and buzzer are left untouched.
 | LCD MISO    | 12   |
 | LCD RST     | 13   |
 | Backlight   | 25 (PWM slice 4 B) |
+| Touch SDA   | 6 (I2C1) |
+| Touch SCL   | 7 (I2C1) |
+| Touch INT   | 21   |
+| Touch RST   | 22   |
 
 The ST7789V2 has 240×320 of RAM; the visible 280 rows start at row 20, which
 the driver offsets internally.
@@ -121,14 +134,14 @@ the driver offsets internally.
 | `GET_STATUS` | Status of the last request |
 | `GET_DESCRIPTOR` | Magic, version 1, no flags, LZ4, 49,152-byte decoded buffer limit, fixed 240×280 |
 | `GET_FORMATS` | `RGB565` only |
-| `GET_PROPERTIES` | none |
+| `GET_PROPERTIES` | `ROTATION`: 0, 90, 180 and 270 offered |
 | `GET_CONNECTORS` | one `PANEL` connector, no status polling |
 | `GET_CONNECTOR_PROPERTIES` | `BACKLIGHT_BRIGHTNESS` (0–100) |
 | `GET_CONNECTOR_STATUS` | always connected |
 | `GET_CONNECTOR_MODES` | one preferred 240×280 mode at ~60 Hz |
 | `GET_CONNECTOR_EDID` | empty |
-| `SET_STATE_CHECK` | validates mode/format/connector, stages brightness |
-| `SET_STATE_COMMIT` | applies brightness |
+| `SET_STATE_CHECK` | validates mode/format/connector, stages brightness and rotation |
+| `SET_STATE_COMMIT` | applies brightness; a rotation change reprograms the panel's MADCTL, and later `SET_BUFFER` rectangles are in the rotated framebuffer (280×240 for 90 and 270) |
 | `SET_CONTROLLER_ENABLE` | accepted |
 | `SET_DISPLAY_ENABLE` | panel DISPON/DISPOFF and backlight |
 | `SET_BUFFER` | validates a bounded rectangle and queues its raw or LZ4 payload |

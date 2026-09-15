@@ -5,7 +5,8 @@
 //! The driver only owns the control pins and issues commands over a borrowed
 //! SPI bus, so the firmware can push pixel data on the same bus however it
 //! likes (blocking writes, DMA). The controller's RAM is 240x320; the
-//! visible 280 rows sit 20 rows in.
+//! visible 280 rows sit 20 rows in. Rotation is done by the controller's
+//! MADCTL addressing, so a rotated framebuffer is written unchanged.
 
 #![no_std]
 
@@ -15,28 +16,18 @@ pub mod strip;
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::OutputPin;
 use embedded_hal::spi::SpiBus;
+pub use gud_protocol::Rotation;
 
-#[cfg(not(feature = "landscape"))]
-mod geometry {
-    pub const WIDTH: u16 = 240;
-    pub const HEIGHT: u16 = 280;
-    pub const X_OFFSET: u16 = 0;
-    pub const Y_OFFSET: u16 = 20;
-    pub const MADCTL: u8 = 0x00;
-}
-
-#[cfg(feature = "landscape")]
-mod geometry {
-    pub const WIDTH: u16 = 280;
-    pub const HEIGHT: u16 = 240;
-    pub const X_OFFSET: u16 = 20;
-    pub const Y_OFFSET: u16 = 0;
-    // MX | MV | ML: rotate 90 degrees, keep RGB order.
-    pub const MADCTL: u8 = 0x70;
-}
-
-pub use geometry::{HEIGHT, WIDTH};
-use geometry::{MADCTL, X_OFFSET, Y_OFFSET};
+/// The glass: 240x280, active area 27.97 x 32.63 mm. Everything is in this
+/// native portrait frame; rotation is applied in the controller's
+/// addressing (`St7789::set_rotation`), so a rotated framebuffer from the
+/// host is written as it arrives.
+pub const WIDTH: u16 = 240;
+pub const HEIGHT: u16 = 280;
+pub const WIDTH_TENTH_MM: u16 = 280;
+pub const HEIGHT_TENTH_MM: u16 = 326;
+/// The controller's RAM is 240x320; the visible rows start 20 in.
+const ROW_OFFSET: u16 = 20;
 
 pub const BYTES_PER_PIXEL: usize = 2;
 /// One full frame of RGB565.
@@ -56,6 +47,23 @@ pub struct St7789<DC, CS, RST> {
     dc: DC,
     cs: CS,
     rst: RST,
+    rotation: Rotation,
+}
+
+/// MADCTL and the RAM offsets of the visible window for each rotation.
+/// Rotations are counter-clockwise (DRM's convention): 90 puts the
+/// framebuffer's top edge at the left of the portrait glass, 270 at the
+/// right. Checked on the glass.
+fn addressing(rotation: Rotation) -> (u8, u16, u16) {
+    match rotation {
+        Rotation::Rotate0 => (0x00, 0, ROW_OFFSET),
+        // MY | MV | ML: columns address the long axis.
+        Rotation::Rotate90 => (0xB0, ROW_OFFSET, 0),
+        // MX | MY.
+        Rotation::Rotate180 => (0xC0, 0, ROW_OFFSET),
+        // MX | MV | ML.
+        Rotation::Rotate270 => (0x70, ROW_OFFSET, 0),
+    }
 }
 
 impl<DC, CS, RST> St7789<DC, CS, RST>
@@ -65,7 +73,18 @@ where
     RST: OutputPin,
 {
     pub fn new(dc: DC, cs: CS, rst: RST) -> Self {
-        Self { dc, cs, rst }
+        Self { dc, cs, rst, rotation: Rotation::Rotate0 }
+    }
+
+    pub fn rotation(&self) -> Rotation {
+        self.rotation
+    }
+
+    /// Reprogram the addressing so later rectangles are in the rotated
+    /// frame (`HEIGHT` x `WIDTH` for 90 and 270). Call between rectangles.
+    pub fn set_rotation(&mut self, spi: &mut impl SpiBus, rotation: Rotation) {
+        self.rotation = rotation;
+        self.command(spi, CMD_MADCTL, &[addressing(rotation).0]);
     }
 
     /// Hardware reset followed by the panel vendor's register sequence.
@@ -78,7 +97,8 @@ where
         let _ = self.rst.set_high();
         delay.delay_ms(100);
 
-        self.command(spi, CMD_MADCTL, &[MADCTL]);
+        self.rotation = Rotation::Rotate0;
+        self.command(spi, CMD_MADCTL, &[addressing(Rotation::Rotate0).0]);
         self.command(spi, CMD_COLMOD, &[0x05]); // 16 bpp
         self.command(spi, 0xB2, &[0x0B, 0x0B, 0x00, 0x33, 0x35]); // porch control
         self.command(spi, 0xB7, &[0x11]); // gate control
@@ -124,9 +144,10 @@ where
     /// data written on the bus afterwards fills it row by row until
     /// `end_rect`.
     pub fn begin_rect(&mut self, spi: &mut impl SpiBus, x: u16, y: u16, width: u16, height: u16) {
-        let x0 = x + X_OFFSET;
+        let (_, x_offset, y_offset) = addressing(self.rotation);
+        let x0 = x + x_offset;
         let x1 = x0 + width - 1;
-        let y0 = y + Y_OFFSET;
+        let y0 = y + y_offset;
         let y1 = y0 + height - 1;
         self.command(spi, CMD_CASET, &[(x0 >> 8) as u8, x0 as u8, (x1 >> 8) as u8, x1 as u8]);
         self.command(spi, CMD_RASET, &[(y0 >> 8) as u8, y0 as u8, (y1 >> 8) as u8, y1 as u8]);

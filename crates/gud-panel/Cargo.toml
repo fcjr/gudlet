@@ -7,7 +7,4 @@ license.workspace = true
 
 [dependencies]
 embedded-hal.workspace = true
-
-[features]
-# Present the panel rotated 90 degrees as 280x240 instead of the native 240x280.
-landscape = []
+gud-protocol.workspace = true

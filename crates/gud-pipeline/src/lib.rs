@@ -4,7 +4,7 @@
 
 pub use embassy_sync::channel::TrySendError;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
-use gud_protocol::{Command, Rect};
+use gud_protocol::{Command, Rect, Rotation};
 
 pub enum PanelJob<const N: usize> {
     Band {
@@ -12,6 +12,7 @@ pub enum PanelJob<const N: usize> {
         rect: Rect,
     },
     Enable(bool),
+    Rotate(Rotation),
 }
 
 pub type JobChannel<const N: usize> = Channel<CriticalSectionRawMutex, PanelJob<N>, 4>;

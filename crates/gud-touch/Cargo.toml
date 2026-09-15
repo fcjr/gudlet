@@ -1,0 +1,17 @@
+[package]
+name = "gud-touch"
+description = "USB HID touch screen reports and the CST816 touch controller driver shared by the gudlet boards"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+embedded-hal.workspace = true
+usb-device = { version = "0.3", optional = true }
+embassy-usb = { version = "0.6", default-features = false, optional = true }
+
+[features]
+# HID class for the usb-device stack (RP2040).
+usb-device = ["dep:usb-device"]
+# Control request handler for embassy-usb's HID class (ESP32-S3).
+embassy-usb = ["dep:embassy-usb"]

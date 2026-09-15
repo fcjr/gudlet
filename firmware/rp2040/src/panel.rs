@@ -148,6 +148,10 @@ where
                     self.lcd.set_display_on(self.spi.as_mut().unwrap(), on);
                     ENABLED.store(on as u32, Ordering::Relaxed);
                 }
+                Ok(PanelJob::Rotate(rotation)) => {
+                    self.close_rect();
+                    self.lcd.set_rotation(self.spi.as_mut().unwrap(), rotation);
+                }
                 Err(_) => {
                     if self.in_flight.as_ref().is_some_and(|t| t.is_done()) {
                         self.close_rect();

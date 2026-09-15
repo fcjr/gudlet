@@ -9,6 +9,7 @@ license.workspace = true
 gud-protocol.workspace = true
 gud-panel.workspace = true
 gud-pipeline.workspace = true
+gud-touch = { workspace = true, features = ["embassy-usb"] }
 embedded-hal.workspace = true
 embassy-executor = "0.10"
 embassy-futures = "0.1"
@@ -24,7 +25,6 @@ esp32s3 = "0.36"
 static_cell = "2"
 
 [features]
-landscape = ["gud-panel/landscape"]
 # Draw a hex status strip across the top of the panel once a second (see
 # src/panel.rs). Bring-up aid; it covers the top 36 rows of the desktop.
 debug-strip = []

@@ -1236,6 +1236,7 @@ dependencies = [
  "gud-panel",
  "gud-pipeline",
  "gud-protocol",
+ "gud-touch",
  "static_cell",
 ]
 
@@ -1244,6 +1245,7 @@ name = "gud-panel"
 version = "0.1.0"
 dependencies = [
  "embedded-hal 1.0.0",
+ "gud-protocol",
 ]
 
 [[package]]
@@ -1273,6 +1275,7 @@ dependencies = [
  "gud-panel",
  "gud-pipeline",
  "gud-protocol",
+ "gud-touch",
  "panic-halt",
  "portable-atomic",
  "rp2040-boot2",
@@ -1280,6 +1283,15 @@ dependencies = [
  "static_cell",
  "usb-device",
  "usbd-serial",
+]
+
+[[package]]
+name = "gud-touch"
+version = "0.1.0"
+dependencies = [
+ "embassy-usb",
+ "embedded-hal 1.0.0",
+ "usb-device",
 ]
 
 [[package]]

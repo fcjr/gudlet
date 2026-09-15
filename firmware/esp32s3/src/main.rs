@@ -4,6 +4,10 @@
 //! streams the host's framebuffer updates straight into the board's ST7789V2
 //! panel.
 //!
+//! The board's CST816 touch controller is exposed as a USB HID touch screen
+//! interface (see `touch.rs`), so the host gets touch through its own HID
+//! stack with nothing to install.
+//!
 //! A CDC-ACM serial port sits beside the GUD interface. It prints a status
 //! line once a second while open, and writing `gud-reflash` to it reboots
 //! the chip into the ROM download mode so espflash can reflash it without
@@ -14,19 +18,22 @@
 
 mod gud;
 mod panel;
+mod touch;
 
 use core::fmt::Write;
 use core::sync::atomic::Ordering;
 
 use embassy_executor::Spawner;
-use embassy_futures::join::join5;
+use embassy_futures::join::{join, join5};
 use embassy_time::{with_timeout, Duration, Timer};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, Receiver, Sender, State};
+use embassy_usb::class::hid;
 use embassy_usb::Builder;
 use esp_hal::clock::CpuClock;
 use embedded_hal::delay::DelayNs;
 use esp_hal::delay::Delay;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
+use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::ledc::channel::ChannelIFace;
 use esp_hal::ledc::timer::TimerIFace;
 use esp_hal::ledc::{channel, timer, LSGlobalClkSource, Ledc, LowSpeed};
@@ -40,6 +47,8 @@ use esp_hal::usb::otg::Usb;
 use esp_hal::system::Stack;
 use gud_panel::{strip, St7789, HEIGHT, WIDTH};
 use gud_protocol::{USB_PID, USB_VID};
+use gud_touch::hid::{POLL_MS, TOUCH_REPORT_LEN};
+use gud_touch::{Cst816, TouchHidState};
 use static_cell::{ConstStaticCell, StaticCell};
 
 use gud::{
@@ -135,6 +144,8 @@ const WATCHDOG_TIMEOUT_S: u64 = 5;
 /// The panel's SPI write cycle bottoms out at 16 ns. The pins go through the
 /// GPIO matrix rather than IOMUX, which is fine for an output-only bus.
 const SPI_FREQUENCY_MHZ: u32 = 40;
+/// The CST816 is rated for 10 to 400 kHz.
+const TOUCH_I2C_KHZ: u32 = 400;
 
 static COMMANDS: CommandChannel = CommandChannel::new();
 static JOBS: JobChannel = JobChannel::new();
@@ -293,7 +304,7 @@ async fn console_task<'d>(
         let mut line = Line::new();
         let _ = write!(
             line,
-            "gud {}x{} up={}s reset={:?} updates={} bytes={} wire={} rejected={} last_rejected=0x{:02x} abandoned={} rx_disabled={} rx_overflow={} decode_errors={} rx_us={} rx_pkts={} decode_us={} swap_us={} spi_us={} idle_us={} starve_us={} bands_written={} pixels_written={} panel_state=0x{:x} console_rx={} console_tx_ok={} console_tx_timeout={}\r\n",
+            "gud {}x{} up={}s reset={:?} updates={} bytes={} wire={} rejected={} last_rejected=0x{:02x} abandoned={} rx_disabled={} rx_overflow={} decode_errors={} rx_us={} rx_pkts={} decode_us={} swap_us={} spi_us={} idle_us={} starve_us={} bands_written={} pixels_written={} panel_state=0x{:x} console_rx={} console_tx_ok={} console_tx_timeout={} touch={} touch_dropped={} touch_errors={}\r\n",
             WIDTH,
             HEIGHT,
             uptime_s,
@@ -320,6 +331,9 @@ async fn console_task<'d>(
             STATS.console_rx_bytes.load(Ordering::Relaxed),
             STATS.console_tx_ok.load(Ordering::Relaxed),
             STATS.console_tx_timeout.load(Ordering::Relaxed),
+            STATS.touch_reports.load(Ordering::Relaxed),
+            STATS.touch_dropped.load(Ordering::Relaxed),
+            STATS.touch_errors.load(Ordering::Relaxed),
         );
         for chunk in line.as_bytes().chunks(63) {
             match with_timeout(CONSOLE_WRITE_TIMEOUT, sender.write_packet(chunk)).await {
@@ -401,6 +415,29 @@ async fn main(_spawner: Spawner) {
     let cs = Output::new(peripherals.GPIO5, Level::High, OutputConfig::default());
     let rst = Output::new(peripherals.GPIO8, Level::High, OutputConfig::default());
     let boot_button = Input::new(peripherals.GPIO0, InputConfig::default().with_pull(Pull::Up));
+
+    // Touch controller per the same pin table: SCL 10, SDA 11, RST 13, INT 14.
+    // The board has pull-ups on the bus and on INT.
+    let touch_i2c = I2c::new(
+        peripherals.I2C0,
+        I2cConfig::default().with_frequency(Rate::from_khz(TOUCH_I2C_KHZ)),
+    )
+    .unwrap()
+    .with_sda(peripherals.GPIO11)
+    .with_scl(peripherals.GPIO10);
+    let touch_rst = Output::new(peripherals.GPIO13, Level::High, OutputConfig::default());
+    let touch_int = Input::new(peripherals.GPIO14, InputConfig::default().with_pull(Pull::Up));
+    let mut touch_controller = Cst816::new(touch_i2c, touch_rst);
+    let touch_present = match touch_controller.init(&mut Delay::new()) {
+        Ok(id) => {
+            esp_println::println!("gud: touch controller 0x{:02x} ready", id);
+            true
+        }
+        Err(e) => {
+            esp_println::println!("gud: no touch controller: {:?}", e);
+            false
+        }
+    };
 
     // ~25 kHz backlight PWM, duty in percent.
     let mut ledc = Ledc::new(peripherals.LEDC);
@@ -504,6 +541,25 @@ async fn main(_spawner: Spawner) {
     let serial = CdcAcmClass::new(&mut builder, SERIAL_STATE.init(State::new()), 64);
     let (sender, receiver) = serial.split();
 
+    // HID touch screen, last so the GUD and console interfaces keep their
+    // numbers, and only when there is a controller to report for.
+    static HID_STATE: StaticCell<hid::State> = StaticCell::new();
+    static TOUCH_HID: StaticCell<TouchHidState> = StaticCell::new();
+    let touch_writer = touch_present.then(|| {
+        hid::HidWriter::<_, TOUCH_REPORT_LEN>::new(
+            &mut builder,
+            HID_STATE.init(hid::State::new()),
+            hid::Config {
+                report_descriptor: &touch::REPORT_DESCRIPTOR,
+                request_handler: Some(TOUCH_HID.init(TouchHidState::new(&touch::LAST_REPORT))),
+                poll_ms: POLL_MS,
+                max_packet_size: 64,
+                hid_subclass: hid::HidSubclass::No,
+                hid_boot_protocol: hid::HidBootProtocol::None,
+            },
+        )
+    });
+
     let mut usb = builder.build();
     esp_println::println!("gud: usb ready, switching PHY to OTG");
     watchdog.feed();
@@ -526,12 +582,20 @@ async fn main(_spawner: Spawner) {
     stage(4);
     esp_println::println!("gud: core 1 started");
 
-    join5(
-        usb.run(),
-        receive_task(bulk_out, backlight, &COMMANDS, &JOBS, &FREE),
-        reflash_trigger_task(receiver),
-        boot_button_task(boot_button),
-        console_task(sender, watchdog, reset_reason, previous_stage),
+    join(
+        join5(
+            usb.run(),
+            receive_task(bulk_out, backlight, &COMMANDS, &JOBS, &FREE),
+            reflash_trigger_task(receiver),
+            boot_button_task(boot_button),
+            console_task(sender, watchdog, reset_reason, previous_stage),
+        ),
+        async {
+            match touch_writer {
+                Some(writer) => touch::touch_task(writer, touch_controller, touch_int).await,
+                None => core::future::pending().await,
+            }
+        },
     )
     .await;
 }
