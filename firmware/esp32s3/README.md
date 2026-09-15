@@ -115,10 +115,11 @@ how a 1200-baud reboot trigger ended up rebooting the board on every open.
 
 ## On-panel diagnostics
 
-At boot the panel shows eight color bars for half a second, pushed through
-the same DMA path the frames take; noise or a blank panel at that point means
-the panel init or SPI path is broken. If the previous run panicked, the panic
-message is drawn across the top of the panel for four seconds after the bars.
+At boot the panel shows the gudlet logo, a mint monitor above a lowercase
+wordmark on a dark background. It uses the same DMA path as incoming frames.
+The backlight turns on after the logo is drawn, and USB starts half a second
+later. If the previous run panicked, the panel shows the panic message for
+four seconds instead.
 
 Building with `just features=debug-strip build esp32s3` draws a hex status strip across the
 top 36 rows once a second (uptime, console tick, control requests, DTR,

@@ -9,6 +9,7 @@
 
 #![no_std]
 
+pub mod splash;
 pub mod strip;
 
 use embedded_hal::delay::DelayNs;
@@ -163,11 +164,22 @@ where
     pub fn set_display_on(&mut self, spi: &mut impl SpiBus, on: bool) {
         self.command(spi, if on { CMD_DISPON } else { CMD_DISPOFF }, &[]);
     }
+
+    /// Draw the shared boot logo using only one row of scratch RAM.
+    pub fn show_boot_logo(&mut self, spi: &mut impl SpiBus) {
+        let mut row = [0; WIDTH as usize * 2];
+        self.begin_rect(spi, 0, 0, WIDTH, HEIGHT);
+        for y in 0..HEIGHT {
+            splash::render_rows(y, &mut row);
+            spi.write(&row).ok().expect("boot logo write failed");
+        }
+        let _ = spi.flush();
+        self.end_rect();
+    }
 }
 
 /// Fill `out` with full-width rows of eight vertical color bars, big-endian
-/// RGB565: the boot-time self test. Anything else on the glass means the
-/// panel init or the pixel path is broken.
+/// RGB565, for testing panel initialization and the pixel path.
 pub fn color_bars(out: &mut [u8]) {
     const COLORS: [u16; 8] = [0xF800, 0x07E0, 0x001F, 0xFFE0, 0xF81F, 0x07FF, 0xFFFF, 0x0000];
     let width = WIDTH as usize;

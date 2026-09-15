@@ -105,17 +105,17 @@ where
         }
     }
 
-    /// Boot-time self test through the same DMA path the frames take: eight
-    /// vertical color bars. Anything else on the glass means a bug here.
-    pub fn test_pattern(&mut self, scratch: &mut [u8]) {
+    /// Draw the shared boot logo through the same DMA path as display frames.
+    pub fn show_boot_logo(&mut self, scratch: &mut [u8]) {
         let width = WIDTH as usize;
         let height = gud_panel::HEIGHT as usize;
         let rows = scratch.len() / (width * 2);
+        assert!(rows > 0, "boot logo needs at least one row of scratch space");
         let mut y = 0;
         while y < height {
             let band_rows = rows.min(height - y);
             let band = &mut scratch[..band_rows * width * 2];
-            gud_panel::color_bars(band);
+            gud_panel::splash::render_rows(y as u16, band);
             self.write_band(0, y as u16, width as u16, band_rows as u16, band);
             y += band_rows;
         }

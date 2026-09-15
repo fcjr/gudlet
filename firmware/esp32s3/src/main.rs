@@ -428,16 +428,16 @@ async fn main(_spawner: Spawner) {
     esp_println::println!("gud: lcd init done");
     lcd.fill(&mut spi, 0x0000);
     esp_println::println!("gud: lcd cleared");
-    let _ = backlight.set_duty(100);
     let dma_buffers = [
         esp_hal::dma_tx_buffer!(panel::DMA_CHUNK).unwrap(),
         esp_hal::dma_tx_buffer!(panel::DMA_CHUNK).unwrap(),
     ];
     let mut board = PanelWorker::new(lcd, spi, dma_buffers);
-    let backlight = BacklightPwm(backlight);
     esp_println::println!("gud: dma buffers ready");
     let decoded = DECODED.take();
-    board.test_pattern(&mut decoded[..]);
+    board.show_boot_logo(&mut decoded[..]);
+    let _ = backlight.set_duty(100);
+    let backlight = BacklightPwm(backlight);
     {
         let record = crash();
         if record.panic_len > 0 {
@@ -451,7 +451,7 @@ async fn main(_spawner: Spawner) {
             Delay::new().delay_ms(500);
         }
     }
-    esp_println::println!("gud: test pattern shown");
+    esp_println::println!("gud: boot logo shown");
 
     // USB OTG on the native pins (shared with the ROM's USB-Serial-JTAG).
     let usb = Usb::new_fs(peripherals.USB_FS, peripherals.GPIO20, peripherals.GPIO19);

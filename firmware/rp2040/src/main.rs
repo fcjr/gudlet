@@ -165,7 +165,8 @@ fn main() -> ! {
 
     let mut lcd = St7789::new(dc, cs, rst);
     lcd.init(&mut spi, &mut timer);
-    lcd.fill(&mut spi, 0x0000);
+    lcd.show_boot_logo(&mut spi);
+    let _ = backlight.set_duty_cycle_percent(100);
 
     let usb_bus = UsbBusAllocator::new(UsbBus::new(
         pac.USBCTRL_REGS,

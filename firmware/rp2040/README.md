@@ -51,8 +51,8 @@ This crate has not been run on hardware yet; the ESP32-S3 crate has.
 2. Either copy `gud-rp2040.uf2` onto that drive, or run `just flash rp2040`
    (`cargo run --release` here), which does the same via `elf2uf2-rs -d`.
 
-The board reboots into the firmware, clears the panel to black with the
-backlight on, and waits for a host.
+The board reboots into the firmware, shows the gudlet boot logo, turns on
+the backlight, and waits for a host.
 
 ## Pinout
 
