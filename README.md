@@ -1,29 +1,34 @@
 # gudlet
 
-Turn a Waveshare 1.69" LCD board into a tiny USB monitor.
+Turn a Waveshare 1.69" touch LCD board into a tiny USB monitor.
 
 gudlet is Rust firmware that lets your computer use the board as a second
-display over a USB data cable. It speaks
-[GUD, the Generic USB Display protocol](https://github.com/notro/gud/wiki).
-On macOS, use it with [GUD Display](https://github.com/fcjr/gud-display-mac).
-On Linux, use a kernel with the `gud` driver enabled.
+display over a USB data cable, with its touch screen as input. It speaks
+[GUD, the Generic USB Display protocol](https://github.com/notro/gud/wiki),
+and exposes touch as a standard USB HID touch screen, so nothing needs
+installing on the host beyond a GUD driver. On macOS, use it with
+[GUD Display](https://github.com/fcjr/gud-display-mac). On Linux, use a
+kernel with the `gud` driver enabled.
 
 ## Supported boards
 
 | Board | Status |
 |---|---|
-| [Waveshare ESP32-S3-Touch-LCD-1.69](https://www.waveshare.com/esp32-s3-touch-lcd-1.69.htm) | Tested on hardware with GUD Display on macOS, including LZ4 compression, touch and rotation |
-| [Waveshare RP2040-Touch-LCD-1.69](https://www.waveshare.com/rp2040-touch-lcd-1.69.htm) | LZ4, multicore and SPI DMA tested; touch and rotation build but are untested on hardware; USB stalls under sustained motion remain under investigation |
+| [Waveshare ESP32-S3-Touch-LCD-1.69](https://www.waveshare.com/esp32-s3-touch-lcd-1.69.htm) | Tested on hardware with GUD Display on macOS: display, LZ4 compression, brightness, touch and rotation |
+| [Waveshare RP2040-Touch-LCD-1.69](https://www.waveshare.com/rp2040-touch-lcd-1.69.htm) | Display, LZ4, multicore and SPI DMA tested; touch and rotation build but are untested on hardware; USB stalls under sustained motion remain under investigation |
 
-The display is 240×280 pixels. It advertises the GUD rotation property, so
-the host can turn it in hardware: on Linux the `gud` driver exposes it as
-the plane's DRM rotation property for the compositor to use, and GUD
-Display on macOS has a Rotation menu for it. Touch is reported in the
-glass's own frame and the host turns it to match.
-Both boards support brightness control and report the panel's capacitive
-touch to the host as a standard USB HID touch screen, so Linux and GUD
-Display on macOS get tap and drag with nothing extra to install. The boards'
-other sensors are not implemented.
+## What you get
+
+- A 240×280 display over USB, with partial updates and LZ4 compression.
+- Backlight brightness control from the host.
+- Rotation to 90°, 180° or 270°, done in the panel's hardware through the
+  GUD rotation property. On Linux the `gud` driver exposes it as the plane's
+  rotation property; on macOS GUD Display has a Rotation menu.
+- Touch as a standard USB HID touch screen. Linux binds `hid-multitouch` to
+  it; GUD Display maps it onto the virtual display. Touch is reported in the
+  panel's own frame and the host turns it to match the rotation.
+
+The boards' other sensors (IMU, RTC, buzzer) are not used.
 
 These are USB full-speed devices. Frame rate depends on how much of the
 screen changes and how well the content compresses. An ESP32-S3 test with
@@ -55,7 +60,7 @@ release BOOT. Connect only the board you want to flash and run:
 just flash esp32s3
 ```
 
-Once gudlet is running, subsequent updates need no button presses:
+Once gudlet is running, later updates need no button presses:
 
 ```sh
 just flash
@@ -72,24 +77,20 @@ and wait for the `RPI-RP2` drive. Then run `just flash rp2040`. See the
 
 ## Use the display
 
-On macOS, launch [GUD Display](https://github.com/fcjr/gud-display-mac) and
-grant Screen Recording permission when requested. The board appears in
-System Settings > Displays, where you can arrange it beside your main
-screen or enable mirroring. Use the app's menu to adjust brightness, rotate
-the panel, and switch touch off or on. Touch needs the app to be granted
-Input Monitoring and Accessibility; the app asks once a touch board is
-plugged in and its menu shows what is still missing.
+**macOS.** Launch [GUD Display](https://github.com/fcjr/gud-display-mac)
+and grant Screen Recording when asked. The board appears in
+System Settings › Displays, where you can arrange it beside your main
+screen or mirror to it. The app's menu adjusts brightness, rotates the
+panel, and switches touch off or on. Touch needs the app to be granted
+Input Monitoring and Accessibility; it asks once a touch board is plugged
+in, and its menu shows what is still missing.
 
-On Linux, the `gud` driver handles the USB display. Your desktop's display
-settings control its arrangement. This firmware has been tested with the
-Mac app; Linux hardware testing is still pending.
+**Linux.** The `gud` driver handles the display and `hid-multitouch` the
+touch screen; your desktop's display settings control arrangement and
+rotation. This firmware has been tested with the Mac app; Linux hardware
+testing is still pending.
 
-To rotate the panel, use the host: GUD Display's Rotation menu on macOS
-(or pick the landscape resolution for the display in System Settings), or
-the plane rotation property on Linux. The firmware turns the panel's
-addressing, so no rebuild is needed.
-
-To identify the connected board or read its diagnostic counters:
+To identify the connected board or watch its diagnostic counters:
 
 ```sh
 just detect
@@ -104,17 +105,19 @@ recovery and the serial console in more detail.
 ## Development
 
 ```sh
-just test            # test shared protocol and panel code on the computer
+just test            # test the shared crates on the computer
 just build esp32s3   # compile without flashing
 just build rp2040
 just check           # run shared tests and build both firmware targets
 ```
 
 Both boards share the GUD protocol implementation in `crates/gud-protocol`,
-the bounded LZ4 decoder and pipeline types in `crates/gud-pipeline`, and the
-ST7789 panel driver in `crates/gud-panel`. USB handling and board
-setup live under `firmware/`. The ESP32-S3 uses a patched Embassy USB driver
-under `vendor/` to receive multiple packets per transfer.
+the bounded LZ4 decoder and pipeline types in `crates/gud-pipeline`, the
+ST7789 panel driver with hardware rotation in `crates/gud-panel`, and the
+HID touch screen descriptor, report encoding and CST816 driver in
+`crates/gud-touch`. USB handling and board setup live under `firmware/`.
+The ESP32-S3 uses a patched Embassy USB driver under `vendor/` to receive
+multiple packets per transfer.
 
 ## Thanks, Sophie
 
