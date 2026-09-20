@@ -18,6 +18,7 @@ cortex-m-rt = "0.7"
 panic-halt = "1.0"
 rp2040-boot2 = "0.3"
 rp2040-hal = { version = "0.11", features = ["critical-section-impl", "rt"] }
-usb-device = "0.3"
+# GUD + CDC + touch needs a 132-byte configuration descriptor.
+usb-device = { version = "0.3", features = ["control-buffer-256"] }
 usbd-serial = "0.2"
 
